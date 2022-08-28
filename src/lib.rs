@@ -70,13 +70,22 @@ impl EcommerceContract {
     pub fn get_order(&self, order_id: OrderId) -> Order {
         self.orders.get(&order_id).expect("NOT_FOUND_ORDER_ID")
     }
+
+    #[payable]
+    pub fn cancel_order(&mut self, order_id: OrderId)->Promise{
+        let mut order=self.get_order(order_id.clone());
+        order.is_refund=true;
+        self.orders.insert(&order_id, &order);
+        Promise::new(env::signer_account_id()).transfer(env::attached_deposit() + order.amount)
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use near_sdk::test_utils::{VMContextBuilder, accounts};
-    use near_sdk::{testing_env, MockedBlockchain};
+    use near_sdk::{testing_env};
+    use near_sdk::env::account_balance;
 
     fn get_context(is_view: bool) -> VMContextBuilder {
         let mut builder = VMContextBuilder::new();
@@ -130,5 +139,30 @@ mod tests {
         let mut contract = EcommerceContract::new(alice.clone());
         let order_amount = U128(2000);
         contract.pay_order("order_1".to_owned(), order_amount);
+    }
+
+    #[test]
+    fn test_balance_after_refund(){
+        let mut context = get_context(false);
+        let alice: AccountId = accounts(0);
+
+        context.account_balance(1000)
+        .predecessor_account_id(alice.clone())
+        .attached_deposit(500)
+        .signer_account_id(alice.clone());
+
+        testing_env!(context.build());
+
+        let mut contract = EcommerceContract::new(alice.clone());
+        let order_amount = U128(500);
+        contract.pay_order("order_1".to_owned(), order_amount);
+        contract.cancel_order("order_1".to_owned());
+        let order=contract.get_order("order_1".to_owned());
+        assert_eq!(order.order_id, "order_1".to_owned());
+        assert_eq!(order.amount, order_amount.0);
+        assert_eq!(order.payer_id, alice);
+        assert!(order.is_completed);
+        //check refund
+        assert!(order.is_refund);
     }
 }
